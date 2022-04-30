@@ -1,27 +1,22 @@
-# -----------------------------------------------------------------------------
-# WARNING: GAME WILL NOT WORK UNLESS LSL STREAM IS ACTIVE
-# OpenBCI EEG Pong
-# Language - Python
-# Modules - pygame, sys, random, math, pyqtgraph
-#
-# Controls - Arrow Keys for Right Paddle and WASD Keys for Left Paddle
-#
-# Modified by Robert Henry Goldansky
-#
-# -----------------------------------------------------------------------------
 import pygame
-import numpy as np
 import random
 import time
-import matplotlib.pyplot as plt
 import sys
-from matplotlib import style
+import brainflow
+import numpy as np
+
 from collections import deque
 from math import *
-from pylsl import StreamInlet, resolve_stream
-from time import sleep
-# -----------------------------------------------------------------------------
 
+from brainflow.board_shim import BoardShim, BrainFlowInputParams, LogLevels, BoardIds, BrainFlowError
+from brainflow.data_filter import DataFilter, FilterTypes, AggOperations, WindowFunctions, DetrendOperations
+from brainflow.ml_model import MLModel, BrainFlowMetrics, BrainFlowClassifiers, BrainFlowModelParams
+from brainflow.exit_codes import *
+
+from sklearn.neural_network import MLPClassifier
+from sklearn.datasets import make_classification
+from sklearn.model_selection import train_test_split
+from sklearn.metrics import log_loss
 # initializes the game engine
 pygame.init()
 
@@ -343,32 +338,48 @@ def close():
     pygame.quit()
     sys.exit()
 
+def calibrate(sampling_rate, n_seconds):
+    print("rate", sampling_rate)
+    samples = []
+    # prepare to calibrate moves message
+    print("Move UP for {} seconds".format(n_seconds))
+    time.sleep(n_seconds)
+    up_data = board.get_current_board_data(sampling_rate*n_seconds)
+    samples.append(up_data)
+    board.get_board_data()
+    # "Get into MOVE UP position"
+    # Sample 1
+    # Sample 2
+    # Sample 3
+    # Sample 4
+    # Sample 5
 
-# -----------------------------------------------------------------------------
+    print("Move NEUTRAL for {} seconds".format(n_seconds))
+    time.sleep(n_seconds)
+    neutral_data = board.get_current_board_data(len(samples[0][0]))
+    samples.append(neutral_data)
+    board.get_board_data()
+    # "Get into NEUTRAL position"
+    # Sample 1
+    # Sample 2
+    # Sample 3
+    # Sample 4
+    # Sample 5
 
-def create_lsl_inlet_manually():
-    # first resolve an EEG stream on the lab network
-    print("looking for an EEG stream...")
-    current_stream = resolve_stream('type', 'EEG')
-
-    # create a new inlet to read from the stream
-    return StreamInlet(current_stream[0])
-
-
-# -----------------------------------------------------------------------------
-
-def display_lsl_in_terminal(data_inlet):
-    while pygame.K_F6:
-        # get a new sample (you can also omit the timestamp part if you're not
-        # interested in it)
-        chunk, timestamps = data_inlet.pull_chunk()
-        # chunk = 4.5 / 24 / (2 ^ 23 - 1)
-        if timestamps:
-            print(timestamps, chunk)
-            break
-
-
-# -----------------------------------------------------------------------------------
+    print("Move DOWN for {} seconds".format(n_seconds))
+    time.sleep(n_seconds)
+    down_data = board.get_current_board_data(len(samples[0][0]))
+    samples.append(down_data)
+    board.get_board_data()
+    # "Get into MOVE DOWN position"
+    # Sample 1
+    # Sample 2
+    # Sample 3
+    # Sample 4
+    # Sample 5
+    print(up_data.shape, neutral_data.shape, down_data.shape)
+    # calibration done message
+    return np.array(samples)
 
 def board():
     loop = True
@@ -424,5 +435,85 @@ def board():
         clock.tick(60)
 
 
-ready()
-board()
+if __name__ == '__main__':
+    BoardShim.enable_board_logger()
+    DataFilter.enable_data_logger()
+    MLModel.enable_ml_logger()
+
+    params = BrainFlowInputParams()
+    params.serial_port = '/dev/cu.usbserial-DM025807'
+    board_id = 2  # specify Cyton Daisy board
+    data_file = 'file://test_data.log:w'
+
+    board = BoardShim(2, params)
+    master_board_id = board.get_board_id()
+    print(BoardShim.get_board_descr(board_id))
+    sampling_rate = BoardShim.get_sampling_rate(master_board_id)
+    board.prepare_session()
+    board.start_stream(45000, data_file)
+    BoardShim.log_message(LogLevels.LEVEL_INFO.value, 'start sleeping in the main thread')
+    try:
+        raw_data = np.load('data.npy')
+    except OSError:
+        raw_data = calibrate(sampling_rate, 10)
+        np.save('data.npy', raw_data)
+
+    # X, y = (16,339), (3,339)
+    training_data = np.concatenate(raw_data[:,:16,:].swapaxes(1,2)).T
+    print(training_data.shape)
+
+    training_labels = np.repeat([[1,0,0],[0,1,0],[0,0,1]],np.repeat(raw_data.shape[2], 3), axis=0).T
+    print(training_labels.shape)
+
+    X_train, X_test, y_train, y_test = train_test_split(training_data.T, training_labels.T, stratify=training_labels.T,
+                                                        random_state=1)
+    print("training data stats: ", np.mean(X_train, axis=0))
+    print("test data stats: ", np.mean(y_test, axis=0))
+    clf = MLPClassifier(random_state=1, max_iter=300).fit(X_train, y_train)
+    clf.predict_proba(X_test[:1])
+    print("log loss: ", log_loss(y_test, clf.predict_proba(X_test)))
+    print("predictions", clf.predict(X_test[:5, :]))
+
+    print("score: ", clf.score(X_test, y_test))
+
+    try:
+        while True:
+            time.sleep(0.25)
+            data = np.array(board.get_board_data())[:16, :].T
+            preds = np.mean(clf.predict(data), axis=0)
+            print(["UP", "NEUTRAL", "DOWN"][np.argmax(preds)])
+    except KeyboardInterrupt:
+        pass
+
+    eeg_channels = BoardShim.get_eeg_channels(int(master_board_id))
+    bands = DataFilter.get_avg_band_powers(data, eeg_channels, sampling_rate, True)
+    feature_vector = np.concatenate((bands[0], bands[1]))
+
+    time.sleep(5)  # recommended window size for eeg metric calculation is at least 4 seconds, bigger is better
+    data = board.get_board_data()
+    training_data = np.random.rand(*training_data.shape)
+    print('Raw board data', data)
+    board.stop_stream()
+    board.release_session()
+
+    eeg_channels = BoardShim.get_eeg_channels(int(master_board_id))
+    bands = DataFilter.get_avg_band_powers(data, eeg_channels, sampling_rate, True)
+    feature_vector = np.concatenate((bands[0], bands[1]))
+    print("Feature Vector", feature_vector)
+
+    # calc concentration
+    concentration_params = BrainFlowModelParams(BrainFlowMetrics.CONCENTRATION.value, BrainFlowClassifiers.KNN.value)
+    concentration = MLModel(concentration_params)
+    concentration.prepare()
+    print('Concentration: %f' % concentration.predict(feature_vector))
+    concentration.release()
+
+    # calc relaxation
+    relaxation_params = BrainFlowModelParams(BrainFlowMetrics.RELAXATION.value, BrainFlowClassifiers.REGRESSION.value)
+    relaxation = MLModel(relaxation_params)
+    relaxation.prepare()
+    print('Relaxation: %f' % relaxation.predict(feature_vector))
+    relaxation.release()
+
+    ready()
+    board()

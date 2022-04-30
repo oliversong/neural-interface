@@ -1,7 +1,6 @@
 import time
 import numpy as np
 import pydirectinput
-import pandas as pd
 
 import brainflow
 from brainflow.board_shim import BoardShim, BrainFlowInputParams     

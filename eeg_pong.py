@@ -387,7 +387,6 @@ def board():
     right_change = 0
     ball = Ball(yellow)
     while loop:
-        #test_lsl_pulse_data()
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
                 close()
@@ -451,7 +450,10 @@ if __name__ == '__main__':
     sampling_rate = BoardShim.get_sampling_rate(master_board_id)
     board.prepare_session()
     board.start_stream(45000, data_file)
-    BoardShim.log_message(LogLevels.LEVEL_INFO.value, 'start sleeping in the main thread')
+    BoardShim.log_message(
+        LogLevels.LEVEL_INFO.value,
+        'start sleeping in the main thread'
+    )
     try:
         raw_data = np.load('data.npy')
     except OSError:
@@ -460,13 +462,23 @@ if __name__ == '__main__':
 
     # X, y = (16,339), (3,339)
     training_data = np.concatenate(raw_data[:,:16,:].swapaxes(1,2)).T
-    print(training_data.shape)
+    print("training data shape", training_data.shape)
 
-    training_labels = np.repeat([[1,0,0],[0,1,0],[0,0,1]],np.repeat(raw_data.shape[2], 3), axis=0).T
-    print(training_labels.shape)
+    training_labels = np.repeat(
+        [
+            [1,0,0],[0,1,0],[0,0,1]
+        ],
+        np.repeat(raw_data.shape[2], 3),
+        axis=0
+    ).T
+    print("training labels shape", training_labels.shape)
 
-    X_train, X_test, y_train, y_test = train_test_split(training_data.T, training_labels.T, stratify=training_labels.T,
-                                                        random_state=1)
+    X_train, X_test, y_train, y_test = train_test_split(
+        training_data.T,
+        training_labels.T,
+        stratify=training_labels.T,
+        random_state=1
+    )
     print("training data stats: ", np.mean(X_train, axis=0))
     print("test data stats: ", np.mean(y_test, axis=0))
     clf = MLPClassifier(random_state=1, max_iter=300).fit(X_train, y_train)
@@ -484,36 +496,6 @@ if __name__ == '__main__':
             print(["UP", "NEUTRAL", "DOWN"][np.argmax(preds)])
     except KeyboardInterrupt:
         pass
-
-    eeg_channels = BoardShim.get_eeg_channels(int(master_board_id))
-    bands = DataFilter.get_avg_band_powers(data, eeg_channels, sampling_rate, True)
-    feature_vector = np.concatenate((bands[0], bands[1]))
-
-    time.sleep(5)  # recommended window size for eeg metric calculation is at least 4 seconds, bigger is better
-    data = board.get_board_data()
-    training_data = np.random.rand(*training_data.shape)
-    print('Raw board data', data)
-    board.stop_stream()
-    board.release_session()
-
-    eeg_channels = BoardShim.get_eeg_channels(int(master_board_id))
-    bands = DataFilter.get_avg_band_powers(data, eeg_channels, sampling_rate, True)
-    feature_vector = np.concatenate((bands[0], bands[1]))
-    print("Feature Vector", feature_vector)
-
-    # calc concentration
-    concentration_params = BrainFlowModelParams(BrainFlowMetrics.CONCENTRATION.value, BrainFlowClassifiers.KNN.value)
-    concentration = MLModel(concentration_params)
-    concentration.prepare()
-    print('Concentration: %f' % concentration.predict(feature_vector))
-    concentration.release()
-
-    # calc relaxation
-    relaxation_params = BrainFlowModelParams(BrainFlowMetrics.RELAXATION.value, BrainFlowClassifiers.REGRESSION.value)
-    relaxation = MLModel(relaxation_params)
-    relaxation.prepare()
-    print('Relaxation: %f' % relaxation.predict(feature_vector))
-    relaxation.release()
 
     ready()
     board()

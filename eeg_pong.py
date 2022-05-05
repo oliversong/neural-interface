@@ -76,7 +76,6 @@ def boundary():
     pygame.draw.rect(display, white, (width / 2 - margin / 2, 310, margin, length))
     pygame.draw.rect(display, white, (width / 2 - margin / 2, 360, margin, length))
 
-
 # Paddle Class
 class Paddle:
     def __init__(self, position):
@@ -103,10 +102,8 @@ class Paddle:
         elif self.y + self.h > height:
             self.y -= self.paddleSpeed * y_direction
 
-
 leftPaddle = Paddle(-1)
 rightPaddle = Paddle(1)
-
 
 # Ball Class
 class Ball:
@@ -212,7 +209,6 @@ class Ball:
                     right_paddle_sound.play()
                     self.angle = 135
 
-
 # Function to Show the score on the screen
 def show_score():
     left_score_text = font.render("Score : " + str(scoreLeft), True, red)
@@ -221,14 +217,12 @@ def show_score():
     display.blit(left_score_text, (3 * margin, 3 * margin))
     display.blit(right_score_text, (width / 2 + 3 * margin, 3 * margin))
 
-
 # Function to display FPS in realtime
 def show_fps():
     fps_message = font.render("FPS = ", True, white)
     display.blit(fps_message, (480, 25))
     fps = font.render(str(int(clock.get_fps())), True, white)
     display.blit(fps, (550, 25))
-
 
 # Show controls Function
 def show_controls():
@@ -237,7 +231,6 @@ def show_controls():
 
     display.blit(left_player_control_message, (140, 345))
     display.blit(right_player_control_message, (60, 370))
-
 
 # Game Over Function
 def game_over():
@@ -264,7 +257,6 @@ def game_over():
             display.blit(reset_message_1, (200, 220))
             display.blit(reset_message_2, (200, 240))
             pygame.display.update()
-
 
 # Pause Game Function
 def pause():
@@ -298,7 +290,6 @@ def pause():
             if event.type == pygame.KEYUP:
                 paused = True
 
-
 def ready():
     paused = True
 
@@ -325,7 +316,6 @@ def ready():
                 if event.key == pygame.K_F2:
                     pygame.display.set_mode((width, height))
 
-
 def reset():
     global scoreLeft, scoreRight
     scoreLeft = 0
@@ -338,50 +328,7 @@ def close():
     pygame.quit()
     sys.exit()
 
-def calibrate(sampling_rate, n_seconds):
-    print("rate", sampling_rate)
-    samples = []
-    # prepare to calibrate moves message
-    print("Move UP for {} seconds".format(n_seconds))
-    time.sleep(n_seconds)
-    up_data = board.get_current_board_data(sampling_rate*n_seconds)
-    samples.append(up_data)
-    board.get_board_data()
-    # "Get into MOVE UP position"
-    # Sample 1
-    # Sample 2
-    # Sample 3
-    # Sample 4
-    # Sample 5
-
-    print("Move NEUTRAL for {} seconds".format(n_seconds))
-    time.sleep(n_seconds)
-    neutral_data = board.get_current_board_data(len(samples[0][0]))
-    samples.append(neutral_data)
-    board.get_board_data()
-    # "Get into NEUTRAL position"
-    # Sample 1
-    # Sample 2
-    # Sample 3
-    # Sample 4
-    # Sample 5
-
-    print("Move DOWN for {} seconds".format(n_seconds))
-    time.sleep(n_seconds)
-    down_data = board.get_current_board_data(len(samples[0][0]))
-    samples.append(down_data)
-    board.get_board_data()
-    # "Get into MOVE DOWN position"
-    # Sample 1
-    # Sample 2
-    # Sample 3
-    # Sample 4
-    # Sample 5
-    print(up_data.shape, neutral_data.shape, down_data.shape)
-    # calibration done message
-    return np.array(samples)
-
-def board():
+def game_board():
     loop = True
     left_change = 0
     right_change = 0
@@ -433,6 +380,51 @@ def board():
         pygame.display.update()
         clock.tick(60)
 
+def read_eeg_data(board, n_samples):
+    raw_data = board.get_current_board_data(n_samples)
+    eeg_data = raw_data[:16]  # first 16 channels is eeg data
+    board.get_board_data() # empty remaining data queue
+    return eeg_data
+
+
+def break_into_rolling_window(eeg_data):
+    # TODO: convert single series of 10s data and break into 2s rolling window
+    pass
+
+
+def calibrate(board, sampling_rate, n_seconds):
+    print("sampling rate", sampling_rate)
+
+    # array of array of arrays [[[UP channel 1] [UP channel 2] ...], [NEUTRAL], [DOWN]]
+    samples = []
+
+    print("PREPARE TO CALIBRATE UP...")
+    time.sleep(1)
+    print("Move UP for {} seconds".format(n_seconds))
+    time.sleep(n_seconds)
+    up_data = read_eeg_data(board, sampling_rate*n_seconds)
+    samples.append(up_data)
+    actual_num_samples = len(samples[0][0])
+
+    print("DONE. PREPARE TO CALIBRATE NEUTRAL...")
+    time.sleep(1)
+    print("Move NEUTRAL for {} seconds".format(n_seconds))
+    time.sleep(n_seconds)
+    neutral_data = read_eeg_data(board, actual_num_samples)
+    samples.append(neutral_data)
+
+    print("DONE. PREPARE TO CALIBRATE DOWN...")
+    time.sleep(1)
+    print("Move DOWN for {} seconds".format(n_seconds))
+    time.sleep(n_seconds)
+    down_data = read_eeg_data(board, actual_num_samples)
+    samples.append(down_data)
+
+    print("up, neutral, down shapes", up_data.shape, neutral_data.shape, down_data.shape)
+
+    print("CALIBRATION DONE")
+    return np.array(samples)
+
 
 if __name__ == '__main__':
     BoardShim.enable_board_logger()
@@ -443,6 +435,8 @@ if __name__ == '__main__':
     params.serial_port = '/dev/cu.usbserial-DM025807'
     board_id = 2  # specify Cyton Daisy board
     data_file = 'file://test_data.log:w'
+    training_time = 10
+    rolling_window_time = 1
 
     board = BoardShim(2, params)
     master_board_id = board.get_board_id()
@@ -457,12 +451,15 @@ if __name__ == '__main__':
     try:
         raw_data = np.load('data.npy')
     except OSError:
-        raw_data = calibrate(sampling_rate, 10)
+        raw_data = calibrate(board, sampling_rate, training_time)
         np.save('data.npy', raw_data)
 
     # X, y = (16,339), (3,339)
-    training_data = np.concatenate(raw_data[:,:16,:].swapaxes(1,2)).T
+    swapped_data = raw_data.swapaxes(1,2)
+    training_data = np.concatenate(swapped_data).T
     print("training data shape", training_data.shape)
+
+    # TODO generate rolling N second window from training_data
 
     training_labels = np.repeat(
         [
@@ -482,20 +479,28 @@ if __name__ == '__main__':
     print("training data stats: ", np.mean(X_train, axis=0))
     print("test data stats: ", np.mean(y_test, axis=0))
     clf = MLPClassifier(random_state=1, max_iter=300).fit(X_train, y_train)
-    clf.predict_proba(X_test[:1])
     print("log loss: ", log_loss(y_test, clf.predict_proba(X_test)))
     print("predictions", clf.predict(X_test[:5, :]))
 
     print("score: ", clf.score(X_test, y_test))
 
+    print("PREPARE FOR LIVE CLASSIFYING")
     try:
         while True:
-            time.sleep(0.25)
-            data = np.array(board.get_board_data())[:16, :].T
+            time.sleep(rolling_window_time)
+
+            data = read_eeg_data(board, rolling_window_time*sampling_rate).T
             preds = np.mean(clf.predict(data), axis=0)
-            print(["UP", "NEUTRAL", "DOWN"][np.argmax(preds)])
+            index_of_prediction = np.argmax(preds)
+            print(preds)
+            if index_of_prediction == 0 and preds[0] == 0:
+                # in case it returns [0,0,0]
+                print("unclassified")
+            else:
+                result = ["UP", "NEUTRAL", "DOWN"][index_of_prediction]
+                print(result)
     except KeyboardInterrupt:
         pass
 
-    ready()
-    board()
+    # ready()
+    # game_board()

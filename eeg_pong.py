@@ -386,44 +386,65 @@ def read_eeg_data(board, n_samples):
     board.get_board_data() # empty remaining data queue
     return eeg_data
 
+def apply_rolling_window(eeg_data, window_size):
+    # go through all channels and apply a rolling window to each
+    windowed_data = []
+    for channel in eeg_data:
+        windowed_channel = []
+        for i in range(len(channel) - window_size + 1):
+            window = channel[i:i+window_size]
+            windowed_channel.append(window)
+        windowed_data.append(windowed_channel)
 
-def break_into_rolling_window(eeg_data):
-    # TODO: convert single series of 10s data and break into 2s rolling window
-    pass
+    windowed_data = np.array(windowed_data)
 
+    # group by time domain instead of by channel
+    # result should be an array of points in time
+    # each of which is an array of channels
+    # each of which is an array of datapoints <window_size> long
+    print("windowed_data", np.array(windowed_data).shape)
+    return np.array(
+        [windowed_data[:, x] for x in range(len(windowed_data[0]))]
+    )
 
-def calibrate(board, sampling_rate, n_seconds):
+def calibrate(board, sampling_rate, training_seconds, window_seconds):
     print("sampling rate", sampling_rate)
+    training_window_size = sampling_rate*training_seconds
+    rolling_window_size = sampling_rate*window_seconds
 
-    # array of array of arrays [[[UP channel 1] [UP channel 2] ...], [NEUTRAL], [DOWN]]
-    samples = []
+    # array of array of array of arrays [[[UP channel 1 rolling windows] [UP channel 2] ...], [NEUTRAL], [DOWN]]
 
     print("PREPARE TO CALIBRATE UP...")
     time.sleep(1)
-    print("Move UP for {} seconds".format(n_seconds))
-    time.sleep(n_seconds)
-    up_data = read_eeg_data(board, sampling_rate*n_seconds)
-    samples.append(up_data)
-    actual_num_samples = len(samples[0][0])
+    print("Move UP for {} seconds".format(training_seconds))
+    time.sleep(training_seconds)
+    up_data = read_eeg_data(board, training_window_size)
+    rolled_up_data = apply_rolling_window(up_data, rolling_window_size)
+    samples = rolled_up_data
+
+    actual_num_samples = len(up_data[0])
 
     print("DONE. PREPARE TO CALIBRATE NEUTRAL...")
     time.sleep(1)
-    print("Move NEUTRAL for {} seconds".format(n_seconds))
-    time.sleep(n_seconds)
+    print("Move NEUTRAL for {} seconds".format(training_seconds))
+    time.sleep(training_seconds)
     neutral_data = read_eeg_data(board, actual_num_samples)
-    samples.append(neutral_data)
+    rolled_neutral_data = apply_rolling_window(neutral_data, rolling_window_size)
+    samples = np.concatenate((samples, rolled_neutral_data))
 
     print("DONE. PREPARE TO CALIBRATE DOWN...")
     time.sleep(1)
-    print("Move DOWN for {} seconds".format(n_seconds))
-    time.sleep(n_seconds)
+    print("Move DOWN for {} seconds".format(training_seconds))
+    time.sleep(training_seconds)
     down_data = read_eeg_data(board, actual_num_samples)
-    samples.append(down_data)
+    rolled_down_data = apply_rolling_window(down_data, rolling_window_size)
+    samples = np.concatenate((samples, rolled_down_data))
 
     print("up, neutral, down shapes", up_data.shape, neutral_data.shape, down_data.shape)
+    print("up, neutral, down rolled shapes", rolled_up_data.shape, rolled_neutral_data.shape, rolled_down_data.shape)
 
     print("CALIBRATION DONE")
-    return np.array(samples)
+    return samples
 
 
 if __name__ == '__main__':
@@ -435,13 +456,14 @@ if __name__ == '__main__':
     params.serial_port = '/dev/cu.usbserial-DM025807'
     board_id = 2  # specify Cyton Daisy board
     data_file = 'file://test_data.log:w'
-    training_time = 10
+    training_time = 2
     rolling_window_time = 1
 
     board = BoardShim(2, params)
     master_board_id = board.get_board_id()
     print(BoardShim.get_board_descr(board_id))
     sampling_rate = BoardShim.get_sampling_rate(master_board_id)
+    print("sampling rate", sampling_rate)
     board.prepare_session()
     board.start_stream(45000, data_file)
     BoardShim.log_message(
@@ -451,29 +473,29 @@ if __name__ == '__main__':
     try:
         raw_data = np.load('data.npy')
     except OSError:
-        raw_data = calibrate(board, sampling_rate, training_time)
+        raw_data = calibrate(board, sampling_rate, training_time, rolling_window_time)
         np.save('data.npy', raw_data)
 
     # X, y = (16,339), (3,339)
-    swapped_data = raw_data.swapaxes(1,2)
-    training_data = np.concatenate(swapped_data).T
-    print("training data shape", training_data.shape)
-
-    # TODO generate rolling N second window from training_data
+    print("training data shape", raw_data.shape)
+    raw_shape_length = raw_data.shape[0]
+    print("raw shape length", raw_shape_length)
+    raw_shape_length_div = int(raw_shape_length/3)
+    print("raw shape length div 3", raw_shape_length_div)
 
     training_labels = np.repeat(
         [
             [1,0,0],[0,1,0],[0,0,1]
         ],
-        np.repeat(raw_data.shape[2], 3),
+        np.repeat(raw_shape_length_div, 3),
         axis=0
-    ).T
+    )
     print("training labels shape", training_labels.shape)
 
     X_train, X_test, y_train, y_test = train_test_split(
-        training_data.T,
-        training_labels.T,
-        stratify=training_labels.T,
+        raw_data,
+        training_labels,
+        stratify=training_labels,
         random_state=1
     )
     print("training data stats: ", np.mean(X_train, axis=0))
@@ -490,8 +512,11 @@ if __name__ == '__main__':
             time.sleep(rolling_window_time)
 
             data = read_eeg_data(board, rolling_window_time*sampling_rate).T
-            preds = np.mean(clf.predict(data), axis=0)
+            preds = clf.predict(data)
             index_of_prediction = np.argmax(preds)
+            # TODO: assert that there is only one prediction
+            # because data size should match rolling window
+            # or trim data to rolling window size
             print(preds)
             if index_of_prediction == 0 and preds[0] == 0:
                 # in case it returns [0,0,0]

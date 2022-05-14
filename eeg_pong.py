@@ -399,23 +399,23 @@ def calibrate(board, sampling_rate, n_seconds):
     samples = []
 
     print("PREPARE TO CALIBRATE UP...")
-    time.sleep(1)
-    print("Move UP for {} seconds".format(n_seconds))
+    time.sleep(2)
+    print("Move EYES CLOSED for {} seconds".format(n_seconds))
     time.sleep(n_seconds)
     up_data = read_eeg_data(board, sampling_rate*n_seconds)
     samples.append(up_data)
     actual_num_samples = len(samples[0][0])
 
     print("DONE. PREPARE TO CALIBRATE NEUTRAL...")
-    time.sleep(1)
-    print("Move NEUTRAL for {} seconds".format(n_seconds))
+    time.sleep(2)
+    print("Move EYES OPEN for {} seconds".format(n_seconds))
     time.sleep(n_seconds)
     neutral_data = read_eeg_data(board, actual_num_samples)
     samples.append(neutral_data)
 
     print("DONE. PREPARE TO CALIBRATE DOWN...")
-    time.sleep(1)
-    print("Move DOWN for {} seconds".format(n_seconds))
+    time.sleep(2)
+    print("Move EYES BLINKING for {} seconds".format(n_seconds))
     time.sleep(n_seconds)
     down_data = read_eeg_data(board, actual_num_samples)
     samples.append(down_data)
@@ -435,7 +435,7 @@ if __name__ == '__main__':
     params.serial_port = '/dev/cu.usbserial-DM025807'
     board_id = 2  # specify Cyton Daisy board
     data_file = 'file://test_data.log:w'
-    training_time = 10
+    training_time = 120
     rolling_window_time = 1
 
     board = BoardShim(2, params)
